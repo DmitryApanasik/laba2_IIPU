@@ -51,7 +51,7 @@ void getMemotyInfo() {
 		}
 	}
 
-	cout << setw(8) << "HDD"
+	cout << setw(8) << "SSD"
 		<< setw(16) << totalDiskSpace.QuadPart
 		<< setw(16) << totalFreeSpace.QuadPart
 		<< setw(16) << setprecision(3) << 100.0 - (double)totalFreeSpace.QuadPart / (double)totalDiskSpace.QuadPart * Hundred
@@ -91,30 +91,36 @@ void getMemoryTransferMode(HANDLE diskHandle, STORAGE_PROPERTY_QUERY storageProt
 
 void getAtaSupportStandarts(HANDLE diskHandle) {
 
-	unsigned char identifyDataBuffer[512 + sizeof(ATA_PASS_THROUGH_EX)] = { 0 };
-	ATA_PASS_THROUGH_EX &ataPassThrough = *(ATA_PASS_THROUGH_EX *)identifyDataBuffer; //used for getting/setting inforamtion from/to ATA device
-	ataPassThrough.Length = sizeof(ataPassThrough);
-	ataPassThrough.TimeOutValue = 10;
-	ataPassThrough.DataTransferLength = 512;
-	ataPassThrough.DataBufferOffset = sizeof(ATA_PASS_THROUGH_EX);
-	ataPassThrough.AtaFlags = ATA_FLAGS_DATA_IN; //flag idicates, that there is reading info from ATA
+	UCHAR identifyDataBuffer[512 + sizeof(ATA_PASS_THROUGH_EX)] = { 0 };
 
-	IDEREGS *ideRegs = (IDEREGS *)ataPassThrough.CurrentTaskFile;
-	ideRegs->bCommandReg = 0xEC; //request type 0xEC - command to HDD for retrieve IDENTIFY_DEVICE_DATA structure
+	ATA_PASS_THROUGH_EX &PTE = *(ATA_PASS_THROUGH_EX *)identifyDataBuffer;	//Структура для отправки АТА команды устройству
+	PTE.Length = sizeof(PTE);
+	PTE.TimeOutValue = 10;									//Размер структуры
+	PTE.DataTransferLength = 512;							//Размер буфера для данных
+	PTE.DataBufferOffset = sizeof(ATA_PASS_THROUGH_EX);		//Смещение в байтах от начала структуры до буфера данных
+	PTE.AtaFlags = ATA_FLAGS_DATA_IN;						//Флаг, говорящий о чтении байтов из устройства
 
-	if (!DeviceIoControl(diskHandle, IOCTL_ATA_PASS_THROUGH, &ataPassThrough, sizeof(identifyDataBuffer), &ataPassThrough, sizeof(identifyDataBuffer), NULL, NULL)) {
+	IDEREGS *ideRegs = (IDEREGS *)PTE.CurrentTaskFile;
+	ideRegs->bCommandReg = 0xEC;
+
+	//Производим запрос устройству
+	if (!DeviceIoControl(diskHandle, 
+		IOCTL_ATA_PASS_THROUGH,								//Флаг, говорящий что мы посылаем структуру с командами типа ATA_PASS_THROUGH_EX
+		&PTE, sizeof(identifyDataBuffer), &PTE, sizeof(identifyDataBuffer), NULL, NULL)) {
 		cout << GetLastError() << std::endl;
 		return;
 	}
-
-	short ataSupportByte = ((unsigned short *)(identifyDataBuffer))[80];
+	WORD *data = (WORD *)(identifyDataBuffer + sizeof(ATA_PASS_THROUGH_EX));	//Получаем указатель на массив полученных данных
+	short ataSupportByte = data[80];
 	int i = 2 * BYTE_SIZE;
 	int bitArray[2 * BYTE_SIZE];
+	//Превращаем байты с информацией о поддержке ATA в массив бит
 	while (i--) {
 		bitArray[i] = ataSupportByte & 32768 ? 1 : 0;
 		ataSupportByte = ataSupportByte << 1;
 	}
 
+	//Анализируем полученный массив бит.
 	cout << "ATA Support:   ";
 	for (int i = 8; i >= 4; i--) {
 		if (bitArray[i] == 1) {
@@ -122,6 +128,43 @@ void getAtaSupportStandarts(HANDLE diskHandle) {
 			if (i != 4) {
 				cout << ", ";
 			}
+		}
+	}
+	cout << endl;
+	
+	//Вывод поддерживаемых режимов DMA
+	unsigned short dmaSupportedBytes = data[63];
+	int i2 = 2 * BYTE_SIZE;
+	//Превращаем байты с информацией о поддержке DMA в массив бит
+	while (i2--) {
+		bitArray[i2] = dmaSupportedBytes & 32768 ? 1 : 0;
+		dmaSupportedBytes = dmaSupportedBytes << 1;
+	}
+
+	//Анализируем полученный массив бит.
+	cout << "DMA Support:   ";
+	for (int i = 0; i <8; i++) {
+		if (bitArray[i] == 1) {
+			cout << "DMA" << i;
+			if(i!= 2) cout << ", ";
+		}
+	}
+	cout << endl;
+
+	unsigned short pioSupportedBytes = data[63];
+	int i3 = 2 * BYTE_SIZE;
+	//Превращаем байты с информацией о поддержке PIO в массив бит
+	while (i3--) {
+		bitArray[i3] = pioSupportedBytes & 32768 ? 1 : 0;
+		pioSupportedBytes = pioSupportedBytes << 1;
+	}
+
+	//Анализируем полученный массив бит.
+	cout << "PIO Support:   ";
+	for (int i = 0; i <2; i++) {
+		if (bitArray[i] == 1) {
+			cout << "PIO" << i + 3;
+			if(i!=1) cout << ", ";
 		}
 	}
 	cout << endl;
